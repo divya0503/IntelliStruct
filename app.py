@@ -1,57 +1,59 @@
-# app.py
-
 import streamlit as st
 import pandas as pd
-from textblob import TextBlob
+from transformers import pipeline
 import matplotlib.pyplot as plt
-import io
+import seaborn as sns
+import plotly.express as px
 
-# Title
-st.title("Structured Insights: Feedback Sentiment Analyzer")
-st.markdown("Convert unstructured feedback into structured, analyzable sentiment data.")
+st.title("Structured Insights: Feedback Sentiment Analyzer (Advanced)")
 
-# File Upload
 uploaded_file = st.file_uploader("Upload a CSV file with a column named 'Feedback'", type=["csv"])
+
+# Load sentiment-analysis pipeline once (will download model if not cached)
+@st.cache_resource
+def load_model():
+    return pipeline("sentiment-analysis")
+
+nlp = load_model()
+
+def analyze_sentiment_transformers(text):
+    try:
+        result = nlp(text[:512])[0]  # limit to 512 tokens
+        label = result['label']
+        if label == 'NEGATIVE':
+            return "Negative"
+        elif label == 'POSITIVE':
+            return "Positive"
+        else:
+            return "Neutral"
+    except Exception as e:
+        return "Neutral"
 
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
 
     if 'Feedback' not in df.columns:
-        st.error("CSV must contain a 'Feedback' column.")
+        st.error("CSV file must contain a 'Feedback' column.")
     else:
-        # Preprocessing and Sentiment Analysis
-        def get_sentiment(text):
-            text = str(text).lower().strip()
-            blob = TextBlob(text)
-            polarity = blob.sentiment.polarity
-            if polarity > 0:
-                return 'Positive', polarity
-            elif polarity < 0:
-                return 'Negative', polarity
-            else:
-                return 'Neutral', polarity
+        with st.spinner("Analyzing sentiments..."):
+            df['Sentiment'] = df['Feedback'].astype(str).apply(analyze_sentiment_transformers)
 
-        sentiments = df['Feedback'].apply(get_sentiment)
-        df[['Sentiment', 'Polarity Score']] = pd.DataFrame(sentiments.tolist(), index=df.index)
-
-        # Display structured data
-        st.subheader("Structured Sentiment Data")
+        st.subheader("📄 Structured Feedback Data")
         st.dataframe(df)
 
-        # Visualization
-        st.subheader("Sentiment Distribution")
-        sentiment_counts = df['Sentiment'].value_counts()
-        fig, ax = plt.subplots()
-        ax.pie(sentiment_counts, labels=sentiment_counts.index, autopct='%1.1f%%', startangle=90)
-        ax.axis('equal')
-        st.pyplot(fig)
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Structured Data", csv, "structured_feedback_advanced.csv", "text/csv")
 
-        # Download processed data
-        output = io.BytesIO()
-        df.to_csv(output, index=False)
-        st.download_button(
-            label="Download Structured CSV",
-            data=output.getvalue(),
-            file_name="structured_feedback.csv",
-            mime="text/csv"
-        )
+        st.subheader("📈 Sentiment Distribution")
+
+        sentiment_counts = df['Sentiment'].value_counts().reset_index()
+        sentiment_counts.columns = ['Sentiment', 'Count']
+
+        fig_pie = px.pie(sentiment_counts, names='Sentiment', values='Count',
+                         title='Sentiment Breakdown', color_discrete_sequence=px.colors.qualitative.Set2)
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+        fig_bar, ax = plt.subplots()
+        sns.barplot(data=sentiment_counts, x='Sentiment', y='Count', palette='Set2', ax=ax)
+        ax.set_title('Sentiment Count')
+        st.pyplot(fig_bar)
